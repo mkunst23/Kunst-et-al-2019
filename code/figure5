@@ -1,0 +1,91 @@
+# code to produce Figure 5 of Kunst et al., 2019
+library(nat)
+library(nat.templatebrains)
+library(nat.nblast)
+library(apcluster)
+library(gplots)
+library(RColorBrewer)
+library(magick)
+library(Rvcg)
+library(dendroextras)
+
+#load in all cerebellar output neurons neurons mirrored to the same hemisphere
+CBout <- read.neurons("~/Dropbox (Neuro MPG)/manuscript/celltypome/main_figures/version2/downlodable_data/Kunst_et_al_neurons/CB_output/right", pattern = ".swc")
+
+
+# load surface of brain outline
+brain.surf <- read.hxsurf("~/Documents/projects/celltypome/temp_data/atlas_brain/standard_brain/labels/surfaces/brain-outline-label-ascii.surf")
+
+clear3d()
+plot3d(brain.surf, color="Grey", alpha=0.1)
+plot3d(CBout, soma=3, lwd = 1)
+
+
+# decompose neuron tracin into individual point clouds
+neuronDB.dps <- dotprops(CBout, resample=2, .progress='text', OmitFailures = T)
+
+# NBLAST neurons
+zm_res <- nblast_allbyall(neuronDB.dps, .progress='text')
+
+
+# normalize and calculate the mean
+zm_res_norm <- scale(zm_res, center=FALSE, scale=diag(zm_res))
+zm_res_mean <- (zm_res_norm + t(zm_res_norm)) / 2
+
+# Discard self-matches
+diag(zm_res_mean) <- NA
+
+# Convert NBLAST results to lists and sort
+zm_res_mean_list <- apply(zm_res_mean, 2, list)
+zm_res_mean_list <- lapply(zm_res_mean_list, function(x) sort(x[[1]], decreasing=TRUE))
+zm_res_mean_list <- zm_res_mean_list[order(sapply(zm_res_mean_list, function(x) x[[1]]), decreasing=TRUE)]
+
+# Convert scores to distances
+zm_res_mean_dist <- 1 - zm_res_mean
+diag(zm_res_mean_dist) <- 0
+zm_res_mean_dist <- as.dist(zm_res_mean_dist)
+
+# perform hierachical clustering
+zm_clust <- hclust(zm_res_mean_dist, method = "ward.D2")
+
+plot(zm_clust, labels=FALSE, hang = -1)
+
+# split into multiple clusters by cutting dendrogram at specific height
+col_zm_clust=colour_clusters(zm_clust,k=8)
+cluster_membership <- slice(zm_clust,k=8)[order(zm_clust$order)]
+
+pdf('~/Dropbox (Neuro MPG)/manuscript/celltypome/main_figures/version2/cerebellar_output/dendrogram_k8_color.pdf',width=9,height=3,paper='special')
+plot(col_zm_clust)
+dev.off()
+
+# plot individual clusters
+clusterCols <- rainbow(length(unique(cluster_membership)))
+
+
+clear3d()
+plot3d(brain.surf, color="Grey", alpha=0.1)
+plot3d(zm_clust, k=8, db=CBout, soma=0.3, lwd=2)
+snapshot3d("~/Dropbox (Neuro MPG)/manuscript/celltypome/main_figures/version2/cerebellar_output/clusters/CBout_h3.png")
+
+pp_dorsal <- par3d(no.readonly=TRUE)
+pp_sagittal <- par3d(no.readonly=TRUE)
+
+for(i in 1:length(unique(cluster_membership))) {
+  cluster <- zm_res[cluster_membership == i,]
+  clear3d()
+  plot3d(brain.surf, color="Grey", alpha=0.1)
+  par3d(pp_dorsal)
+  plot3d(row.names(cluster), db=CBout, soma=3, lwd=2, col = clusterCols[i]) 
+  cluster.pic <- paste0("cluster-",i,"-dorsal.png")
+  snapshot3d(cluster.pic)
+  clear3d()
+  plot3d(brain.surf, color="Grey", alpha=0.1)
+  par3d(pp_sagittal)
+  plot3d(row.names(cluster), db=CBout, soma=3, lwd=2, col = clusterCols[i])
+  cluster.pic <- paste0("cluster-",i,"-sagittal.png")
+  snapshot3d(cluster.pic)
+  cluster_member <- paste0("cluster-",i,"-.txt")
+  sink(cluster_member)
+  print(row.names(cluster))
+  sink() 
+}
